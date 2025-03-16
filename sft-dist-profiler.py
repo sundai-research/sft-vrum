@@ -125,6 +125,16 @@ logger.setLevel(level=logging.INFO)
 
 TIME_FORMAT_STR: str = "%b_%d_%H_%M_%S"
 
+
+dist.init_process_group(backend="nccl")
+    
+# get local rank and set up FSDP
+local_rank = int(os.environ.get("LOCAL_RANK", 0))
+world_size = int(os.environ.get("WORLD_SIZE", 1))
+fsdp_config = get_fsdp_config(opt_config, model)
+
+device = torch.device(f"cuda:{local_rank}")
+
 def trace_handler(prof: torch.profiler.profile):
   # Prefix for file names.
   host_name = socket.gethostname()
@@ -135,7 +145,7 @@ def trace_handler(prof: torch.profiler.profile):
   prof.export_chrome_trace(f"{file_prefix}.json.gz")
 
   # Construct the memory timeline file.
-  prof.export_memory_timeline(f"{file_prefix}.html", device="cuda:0")
+  prof.export_memory_timeline(f"{file_prefix}.html", device=device)
 
 with torch.profiler.profile(
     activities=[
@@ -155,14 +165,7 @@ with torch.profiler.profile(
     if opt_config.grad_checkpointing:
       model.grad_enable_checkpointing()
 
-    dist.init_process_group(backend="nccl")
     
-    # get local rank and set up FSDP
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
-    world_size = int(os.environ.get("WORLD_SIZE", 1))
-    fsdp_config = get_fsdp_config(opt_config, model)
-
-    device = torch.device(f"cuda:{local_rank}")
     model.to(device)
 
     model = FSDP(
