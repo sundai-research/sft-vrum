@@ -50,7 +50,7 @@ class LIMODataLoader:
     batch = self.data.select(range(self.example_idx, self.example_idx + self.batch_size))
 
     # pad token and label sequences so that they are all the same length
-    max_len = max(d["len"] for d in batch)
+    max_len = max(len(d["tokens"]) for d in batch)
     x = torch.tensor([d["tokens"][:-1] + [self.tokenizer.pad_token_id] * (max_len - len(d["tokens"])) for d in batch])
     y = torch.tensor([d["labels"][1:] + [-100] * (max_len - len(d["labels"])) for d in batch])
 
