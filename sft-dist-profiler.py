@@ -41,34 +41,15 @@ if torch.cuda.is_available():
   torch.set_float32_matmul_precision("high")
 
 
-
-
-def get_module_class_from_name(
-    model: torch.nn.Module, name: str
-) -> torch.nn.Module | None:
-    modules_children = list(model.children())
-
-    if model.__class__.__name__ == name:
-        return model.__class__
-    elif len(modules_children) == 0:
-        return
-    else:
-        for child_module in modules_children:
-            module_class = get_module_class_from_name(child_module, name)
-            if module_class is not None:
-                return module_class
-
 def get_fsdp_config(args, model):
     from functools import partial
     from torch.distributed.fsdp import FullyShardedDataParallel, MixedPrecision, BackwardPrefetch, ShardingStrategy
 
     # Use the first no-split module to define the auto wrap policy.
-    block_name = model._no_split_modules[0]
+    block_cls = type(model.transformer.layers[0])
     auto_wrap_policy = partial(
         transformer_auto_wrap_policy,
-        transformer_layer_cls={
-            get_module_class_from_name(model, block_name),
-        },
+        transformer_layer_cls={block_cls},
     )
 
     # Build a configuration dict matching as close as possible the original Accelerate config.
