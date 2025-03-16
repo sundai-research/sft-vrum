@@ -16,6 +16,7 @@ from transformers import AutoTokenizer
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import BackwardPrefetch, MixedPrecision, ShardingStrategy
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
+import torch.distributed as dist
 
 from datetime import datetime, timedelta
 import logging
@@ -154,6 +155,8 @@ if True:
     model = Qwen(QwenConfig())
     if opt_config.grad_checkpointing:
       model.grad_enable_checkpointing()
+
+    dist.init_process_group(backend="nccl")
     
     # get local rank and set up FSDP
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
