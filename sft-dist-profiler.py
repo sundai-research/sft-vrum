@@ -167,7 +167,8 @@ if True:
       model,
       device_id=local_rank,
       sharding_strategy=ShardingStrategy.FULL_SHARD,
-      fsdp_config=fsdp_config,
+      #fsdp_config=fsdp_config,
+      auto_wrap_policy=fsdp_config["auto_wrap_policy"],
     )
 
     # model = torch.compile(model)
@@ -197,7 +198,7 @@ if True:
     # gradient accumulation loop
     cum_loss, batch_tokens = 0., 0
     for min_itr in range(opt_config.grad_accum_steps):
-      prof.step()
+      #prof.step()
       with record_function("## forward ##"):
         x, y = train_loader.get_batch()
         x, y = x.to(device), y.to(device)
