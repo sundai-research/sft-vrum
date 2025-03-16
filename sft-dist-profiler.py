@@ -112,7 +112,7 @@ class OptimConfig:
       lr = self.min_lr + (self.max_lr - self.min_lr) * 0.5 * (math.cos(math.pi * decay_frac) + 1.) 
     return lr
 
-opt_config = OptimConfig(device=device, max_itr=1)
+opt_config = OptimConfig(device=device, max_itr=3)
 
 # set up profiling
 logging.basicConfig(
@@ -198,7 +198,7 @@ with torch.profiler.profile(
       f.write(f" iter | train loss | walltime (sec) | ktoks/sec\n")
 
   # training loop
-  checkpoint_int, print_int = 1000, 10
+  checkpoint_int, print_int = 1000, 1  # 10
   eval_int = print_int
   for itr in range(opt_config.max_itr):
     # train
@@ -250,15 +250,15 @@ with torch.profiler.profile(
         f.write(f"{itr:5d} |    {avg_loss.item():.4f} |           {min_dt:.2f} |      {TPS/1e3:.2f}\n")
     
     # save checkpoint
-    if (local_rank == 0):
-      if (itr % checkpoint_int == 0) or (itr == opt_config.max_itr - 1):
-        checkpoint_path = os.path.join(log_dir, f"checkpoint_{itr:04d}.pth")
-        checkpoint = {
-          "iter": itr,
-          "model_config": model.config,
-          "model_state": model.state_dict(),
-          "optimizer_config": opt_config,
-          "optimizer_state": optimizer.state_dict(),
-          "train loss": avg_loss.item(),
-        }
-        torch.save(checkpoint, checkpoint_path)
+    # if (local_rank == 0):
+    #   if (itr % checkpoint_int == 0) or (itr == opt_config.max_itr - 1):
+    #     checkpoint_path = os.path.join(log_dir, f"checkpoint_{itr:04d}.pth")
+    #     checkpoint = {
+    #       "iter": itr,
+    #       "model_config": model.config,
+    #       "model_state": model.state_dict(),
+    #       "optimizer_config": opt_config,
+    #       "optimizer_state": optimizer.state_dict(),
+    #       "train loss": avg_loss.item(),
+    #     }
+    #     torch.save(checkpoint, checkpoint_path)
