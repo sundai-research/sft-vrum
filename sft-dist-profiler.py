@@ -127,6 +127,10 @@ TIME_FORMAT_STR: str = "%b_%d_%H_%M_%S"
 
 
 dist.init_process_group(backend="nccl")
+
+model = Qwen(QwenConfig())
+if opt_config.grad_checkpointing:
+  model.grad_enable_checkpointing()
     
 # get local rank and set up FSDP
 local_rank = int(os.environ.get("LOCAL_RANK", 0))
@@ -161,9 +165,7 @@ with torch.profiler.profile(
   prof.step()
   with record_function("## initialization ##"):
     # instantiate model
-    model = Qwen(QwenConfig())
-    if opt_config.grad_checkpointing:
-      model.grad_enable_checkpointing()
+    
 
     
     model.to(device)
