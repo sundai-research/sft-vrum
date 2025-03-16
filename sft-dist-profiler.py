@@ -136,18 +136,19 @@ def trace_handler(prof: torch.profiler.profile):
   # Construct the memory timeline file.
   prof.export_memory_timeline(f"{file_prefix}.html", device="cuda:0")
 
-with torch.profiler.profile(
-    activities=[
-        torch.profiler.ProfilerActivity.CPU,
-        torch.profiler.ProfilerActivity.CUDA,
-    ],
-    schedule=torch.profiler.schedule(wait=0, warmup=0, active=6, repeat=1),
-    record_shapes=True,
-    profile_memory=True,
-    with_stack=True,
-    on_trace_ready=trace_handler,
-) as prof:
-  prof.step()
+# with torch.profiler.profile(
+#     activities=[
+#         torch.profiler.ProfilerActivity.CPU,
+#         torch.profiler.ProfilerActivity.CUDA,
+#     ],
+#     schedule=torch.profiler.schedule(wait=0, warmup=0, active=6, repeat=1),
+#     record_shapes=True,
+#     profile_memory=True,
+#     with_stack=True,
+#     on_trace_ready=trace_handler,
+# ) as prof:
+#   prof.step()
+if True:
   with record_function("## initialization ##"):
     # instantiate model
     model = Qwen(QwenConfig())
