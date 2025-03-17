@@ -170,7 +170,8 @@ with torch.profiler.profile(
     #model = Qwen(QwenConfig())
     model = AutoModelForCausalLM.from_pretrained(pretrained_model_name_or_path, torch_dtype=torch.bfloat16)
     if opt_config.grad_checkpointing:
-      model.grad_enable_checkpointing()
+      #model.grad_enable_checkpointing()
+      model.gradient_checkpointing_enable()
 
     fsdp_config = get_fsdp_config(opt_config, model)
 
