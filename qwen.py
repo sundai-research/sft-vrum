@@ -136,6 +136,8 @@ class Qwen(nn.Module):
   def forward(self, ids, targets=None, reduction='mean'):
     B, T = ids.size()
     assert T <= self.config.block_size, f"input sequence length {T} exceeds block size {self.config.block_size}"
+    # with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+    # with torch.amp.autocast('cuda', dtype=torch.bfloat16):
     x = self.transformer.embed_tokens(ids)
     if self.grad_checkpointing and self.training:
       for block in self.transformer.layers:
@@ -144,12 +146,44 @@ class Qwen(nn.Module):
       for block in self.transformer.layers:
         x = block(x)
     x = self.transformer.norm(x)
+
+    chunk_size = min(2048, T)
+    # Calculate logits and loss with memory-efficient operations
+    if targets is not None:
+        # Process in chunks for logits and loss calculation
+        total_loss = 0
+        for i in range(0, T, chunk_size):
+            end_idx = min(i+chunk_size, T)
+            chunk_x = x[:, i:end_idx, :]
+            chunk_logits = self.lm_head(chunk_x)
+            
+            if targets is not None:
+                chunk_targets = targets[:, i:end_idx].contiguous()
+                chunk_loss = F.cross_entropy(
+                    chunk_logits.reshape(-1, chunk_logits.size(-1)),
+                    chunk_targets.reshape(-1),
+                    reduction='sum'
+                )
+                total_loss += chunk_loss
+                
+        if targets is not None:
+            if reduction == 'mean':
+                loss = total_loss / (B * T)
+            else:
+                loss = total_loss
+            return chunk_logits, loss  # Return last chunk logits when loss is requested
+    
+    # For inference, process full logits
     logits = self.lm_head(x)
-    if targets is None:
-      return logits
-    else:
-      loss = F.cross_entropy(logits.view(B*T,-1), targets.view(B*T), reduction=reduction)
-      return logits, loss
+    return logits
+
+      
+    # logits = self.lm_head(x)
+    # if targets is None:
+    #   return logits
+    # else:
+    #   loss = F.cross_entropy(logits.view(B*T,-1), targets.view(B*T), reduction=reduction)
+    #   return logits, loss
 
   def generate(self, ids, max_new_tokens=100, temp=1., topk=50):
     B, T = ids.size()

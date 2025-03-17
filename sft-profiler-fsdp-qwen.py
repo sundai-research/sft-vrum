@@ -18,20 +18,57 @@ import logging
 import socket
 
 from limo import LIMODataLoader
-# from qwen import Qwen
-from any_model_no_fsdp import myLLM
+from qwen import Qwen
+# from any_model import myLLM
 
-model_name = 'Qwen/Qwen2.5-1.5B-Instruct'
+import torch.distributed as dist
+import torch.multiprocessing as mp
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data.distributed import DistributedSampler
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.fsdp.fully_sharded_data_parallel import (
+    CPUOffload,
+    BackwardPrefetch,
+)
+from torch.distributed.fsdp.wrap import (
+    size_based_auto_wrap_policy,
+    enable_wrap,
+    wrap,
+    transformer_auto_wrap_policy
+)
 
-tokenizer = AutoTokenizer.from_pretrained(model_name) 
+from functools import partial
 
-# autodetect GPU
-device = "cpu"
-if torch.cuda.is_available():
-  device = "cuda"
-elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-  device = "mps"
-print(f"using {device}")
+from torch.distributed import init_process_group, destroy_process_group
+
+
+tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path="Qwen/Qwen2.5-1.5B-Instruct") 
+
+# set up training environment
+USE_DDP = (int(os.environ.get('RANK',-1)) != -1)
+print('DDP?', USE_DDP)
+if USE_DDP:
+  assert torch.cuda.is_available()
+  init_process_group(backend='nccl')
+  ddp_rank = int(os.environ['RANK'])
+  ddp_local_rank = int(os.environ['LOCAL_RANK'])
+  ddp_world_size = int(os.environ['WORLD_SIZE'])
+  device = f"cuda:{ddp_local_rank}"
+  torch.cuda.set_device(device)
+  IS_MAIN_PROC = (ddp_rank == 0)
+  print(f"setting up GPU {ddp_rank+1} of {ddp_world_size}")
+else:
+  ddp_rank = 0
+  ddp_local_rank = ddp_rank
+  ddp_world_size = 1
+  IS_MAIN_PROC = True
+  # autodetect GPU
+  device = "cpu"
+  if torch.cuda.is_available():
+    device = "cuda"
+  elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    device = "mps"
+  print(f"using {device}")
 
 # set random seeds for reproducibility
 torch.manual_seed(8888)
@@ -98,13 +135,13 @@ def trace_handler(prof: torch.profiler.profile):
   # Prefix for file names.
   host_name = socket.gethostname()
   timestamp = datetime.now().strftime(TIME_FORMAT_STR)
-  file_prefix = f"{host_name}_{timestamp}"
+  file_prefix = f"{host_name}_{timestamp}_rank:{ddp_local_rank}"
 
   # Construct the trace file.
   prof.export_chrome_trace(f"{file_prefix}.json.gz")
 
   # Construct the memory timeline file.
-  prof.export_memory_timeline(f"{file_prefix}.html", device="cuda:0")
+  prof.export_memory_timeline(f"{file_prefix}.html", device=f"cuda:{ddp_local_rank}")
 
 with torch.profiler.profile(
     activities=[
@@ -120,27 +157,41 @@ with torch.profiler.profile(
   prof.step()
   with record_function("## initialization ##"):
     # instantiate model
-    # model = Qwen(QwenConfig())
-    # model.bfloat16()
-    # if opt_config.grad_checkpointing:
-      # model.grad_enable_checkpointing()
-    model = myLLM(model_name)
+    model = Qwen(QwenConfig())
+    # model = myLLM('microsoft/phi-4')
+    model.bfloat16()
+    if opt_config.grad_checkpointing:
+      model.grad_enable_checkpointing()
+
+
+    device = torch.device(f"cuda:{ddp_rank}" if torch.cuda.is_available() else "cpu")
+    torch.cuda.set_device(device)
+
+    # block_cls = type(model.model.model.layers[0])
+    block_cls = type(model.transformer.layers[0])
+    auto_wrap_policy = partial(
+        transformer_auto_wrap_policy,
+        transformer_layer_cls={block_cls},
+    )
+      
     model.to(device)
+    model = FSDP(model, auto_wrap_policy=auto_wrap_policy)
     # model = torch.compile(model)
 
     # instantiate optimizer
     extra_args = dict(fused=True) if opt_config.use_fused else dict()
     optimizer = torch.optim.AdamW(model.parameters(), **extra_args)
-
+    
     # data loaders
-    train_loader = LIMODataLoader(tokenizer, opt_config.batch_size)
+    train_loader = LIMODataLoader(tokenizer, opt_config.batch_size, rank=ddp_rank, world_size=ddp_world_size)
 
     # set up logging
-    log_dir = "yk_logs"
-    os.makedirs(log_dir, exist_ok=True)
-    train_log = os.path.join(log_dir, f"train_log.txt")
-    with open(train_log, "w") as f:
-      f.write(f" iter | train loss | walltime (sec) | ktoks/sec\n")
+    if ddp_rank == 0:
+        log_dir = "yk_logs"
+        os.makedirs(log_dir, exist_ok=True)
+        train_log = os.path.join(log_dir, f"train_log.txt")
+        with open(train_log, "w") as f:
+          f.write(f" iter | train loss | walltime (sec) | ktoks/sec\n")
 
   # training loop
   checkpoint_int, print_int = 1000, 1
@@ -149,7 +200,8 @@ with torch.profiler.profile(
     # train
     model.train()
     min_t0 = time.time()
-
+    optimizer.zero_grad()
+      
     # gradient accumulation loop
     cum_loss, batch_tokens = 0., 0
     for min_itr in range(opt_config.grad_accum_steps):
@@ -157,19 +209,21 @@ with torch.profiler.profile(
       with record_function("## forward ##"):
         x, y = train_loader.get_batch()
         x, y = x.to(device), y.to(device)
-        # print(x.size(), y.size())
-        # from IPython import embed
-        # embed()
         if torch.cuda.is_available():
           with torch.autocast(device_type=opt_config.device_type, dtype=torch.bfloat16): 
-            _, loss = model.forward_chunk(x, y, reduction='sum')
+            _, loss = model(x, y, reduction='sum')
         else:
-          _, loss = model.forward_chunk(x, y, reduction='sum')
+          _, loss = model(x, y, reduction='sum')
         cum_loss += loss.detach()
       with record_function("## backward ##"):
         loss.backward()
         batch_tokens += (y >= 0).sum()
 
+    if USE_DDP:
+      dist.all_reduce(cum_loss, op=dist.ReduceOp.SUM)
+      dist.all_reduce(batch_tokens, op=dist.ReduceOp.SUM)
+      avg_loss = cum_loss / batch_tokens
+    
     with record_function("## update ##"):
       # normalize loss and gradient by the number of (label) tokens in the batch
       avg_loss = cum_loss / batch_tokens
@@ -183,18 +237,28 @@ with torch.profiler.profile(
       for param_group in optimizer.param_groups:
         param_group['lr'] = lr
       optimizer.step()
-      optimizer.zero_grad()
-
-    # logging
+      
     if torch.cuda.is_available():
-      torch.cuda.synchronize()
-    if (itr % print_int == 0):
-      min_t1 = time.time()
-      min_dt = min_t1 - min_t0
-      TPS = batch_tokens / min_dt 
-      print(f"iter {itr} | train loss: {avg_loss.item():.4f} | walltime: {min_dt:.2f} sec | ktoks/sec: {TPS/1e3:.2f}")
-      with open(train_log, "a") as f:
-        f.write(f"{itr:5d} |    {avg_loss.item():.4f} |           {min_dt:.2f} |      {TPS/1e3:.2f}\n")
+        torch.cuda.synchronize()
+        
+    if (itr % print_int == 0) and IS_MAIN_PROC:
+        min_t1 = time.time()
+        min_dt = min_t1 - min_t0
+        TPS = ddp_world_size * batch_tokens / min_dt 
+        print(f"iter {itr} | train loss: {avg_loss.item():.4f} | walltime: {min_dt:.2f} sec | ktoks/sec: {TPS/1e3:.2f}")
+        with open(train_log, "a") as f:
+          f.write(f"{itr:5d} |    {avg_loss.item():.4f} |           {min_dt:.2f} |      {TPS/1e3:.2f}\n")
+
+    # # logging
+    # if torch.cuda.is_available():
+    #   torch.cuda.synchronize()
+    # if (itr % print_int == 0):
+    #   min_t1 = time.time()
+    #   min_dt = min_t1 - min_t0
+    #   TPS = batch_tokens / min_dt 
+    #   print(f"iter {itr} | train loss: {avg_loss.item():.4f} | walltime: {min_dt:.2f} sec | ktoks/sec: {TPS/1e3:.2f}")
+    #   with open(train_log, "a") as f:
+    #     f.write(f"{itr:5d} |    {avg_loss.item():.4f} |           {min_dt:.2f} |      {TPS/1e3:.2f}\n")
     
     # # save checkpoint
     # if (itr % checkpoint_int == 0) or (itr == opt_config.max_itr - 1):

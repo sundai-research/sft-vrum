@@ -18,8 +18,8 @@ import logging
 import socket
 
 from limo import LIMODataLoader
-# from qwen import Qwen
-from any_model_no_fsdp import myLLM
+from qwen import Qwen
+# from any_model import myLLM
 
 model_name = 'Qwen/Qwen2.5-1.5B-Instruct'
 
@@ -98,7 +98,7 @@ def trace_handler(prof: torch.profiler.profile):
   # Prefix for file names.
   host_name = socket.gethostname()
   timestamp = datetime.now().strftime(TIME_FORMAT_STR)
-  file_prefix = f"{host_name}_{timestamp}"
+  file_prefix = f"{host_name}_{timestamp}_og-qwen"
 
   # Construct the trace file.
   prof.export_chrome_trace(f"{file_prefix}.json.gz")
@@ -120,11 +120,11 @@ with torch.profiler.profile(
   prof.step()
   with record_function("## initialization ##"):
     # instantiate model
-    # model = Qwen(QwenConfig())
-    # model.bfloat16()
-    # if opt_config.grad_checkpointing:
-      # model.grad_enable_checkpointing()
-    model = myLLM(model_name)
+    model = Qwen(QwenConfig())
+    model.bfloat16()
+    if opt_config.grad_checkpointing:
+      model.grad_enable_checkpointing()
+    # model = myLLM(model_name)
     model.to(device)
     # model = torch.compile(model)
 
@@ -162,9 +162,9 @@ with torch.profiler.profile(
         # embed()
         if torch.cuda.is_available():
           with torch.autocast(device_type=opt_config.device_type, dtype=torch.bfloat16): 
-            _, loss = model.forward_chunk(x, y, reduction='sum')
+            _, loss = model(x, y, reduction='sum')
         else:
-          _, loss = model.forward_chunk(x, y, reduction='sum')
+          _, loss = model(x, y, reduction='sum')
         cum_loss += loss.detach()
       with record_function("## backward ##"):
         loss.backward()

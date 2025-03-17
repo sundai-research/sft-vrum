@@ -7,7 +7,7 @@ system_prefix = "<|im_start|>system\n"
 user_prefix = "<|im_start|>user\n"
 assistant_prefix = "<|im_start|>assistant\n"
 suffix = "<|im_end|>\n"
-N_SAMPLES = 50
+N_SAMPLES = 200
 MAX_LEN = 16000
 
 def load_LIMO_dataset(tokenizer):
@@ -28,13 +28,16 @@ def load_LIMO_dataset(tokenizer):
   LIMO = LIMO.map(format_LIMO_example)
   LIMO = LIMO.sort("len", reverse=True)
   LIMO = LIMO.select(range(N_SAMPLES))
+  # from IPython import embed
+  # embed()
+  # print(LIMO[0]['len']]
   return LIMO
 
 class LIMODataLoader:
   """
   data loader for the LIMO dataset that supports distributed training
   """
-  def __init__(self, tokenizer, batch_size, rank=1, world_size=1):
+  def __init__(self, tokenizer, batch_size, rank=0, world_size=1):
     self.batch_size = batch_size
     self.data = load_LIMO_dataset(tokenizer)
     self.rank = rank
@@ -50,7 +53,9 @@ class LIMODataLoader:
     batch = self.data.select(range(self.example_idx, self.example_idx + self.batch_size))
 
     # pad token and label sequences so that they are all the same length
-    max_len = max(len(d["tokens"]) for d in batch)
+    max_len = [len(d["tokens"]) for d in batch]
+    print(max_len)
+    max_len = max(max_len)
     x = torch.tensor([d["tokens"][:-1] + [self.tokenizer.pad_token_id] * (max_len - len(d["tokens"])) for d in batch])
     y = torch.tensor([d["labels"][1:] + [-100] * (max_len - len(d["labels"])) for d in batch])
 
