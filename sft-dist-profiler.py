@@ -176,7 +176,7 @@ with torch.profiler.profile(
     model = FSDP(
       model,
       device_id=local_rank,
-      sharding_strategy=ShardingStrategy.FULL_SHARD,
+      #sharding_strategy=ShardingStrategy.FULL_SHARD,
       #fsdp_config=fsdp_config,
       auto_wrap_policy=fsdp_config["auto_wrap_policy"],
     )
