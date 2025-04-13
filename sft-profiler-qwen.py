@@ -61,6 +61,7 @@ class OptimConfig:
   batch_size: int = 2
   grad_accum_steps: int = 2
   grad_checkpointing: bool = True
+  grad_checkpointing_frequency: int = 1
   max_lr: float = 1e-5
   weight_decay: float = 1e-2
   
@@ -123,7 +124,7 @@ with torch.profiler.profile(
     model = Qwen(QwenConfig())
     model.bfloat16()
     if opt_config.grad_checkpointing:
-      model.grad_enable_checkpointing()
+      model.grad_enable_checkpointing(opt_config.grad_checkpointing_frequency)
     # model = myLLM(model_name)
     model.to(device)
     # model = torch.compile(model)
