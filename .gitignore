@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+log/
+yk_logs/
+*.json
+*.json.gz

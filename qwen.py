@@ -102,9 +102,11 @@ class Qwen(nn.Module):
     self.lm_head = nn.Linear(config.embed_dim, config.vocab_size, bias=False)
     self.transformer.embed_tokens.weight = self.lm_head.weight # share token embedding and lm_head weights
     self.grad_checkpointing = False
+    self.checkpoint_frequency = 1 # 1: all blocks, 2: every 2nd block, etc.
 
-  def grad_enable_checkpointing(self):
+  def grad_enable_checkpointing(self, frequency=1):
     self.grad_checkpointing = True
+    self.checkpoint_frequency = frequency
 
   @classmethod
   def load_checkpoint(cls, model, config):
@@ -140,8 +142,11 @@ class Qwen(nn.Module):
     # with torch.amp.autocast('cuda', dtype=torch.bfloat16):
     x = self.transformer.embed_tokens(ids)
     if self.grad_checkpointing and self.training:
-      for block in self.transformer.layers:
-        x = checkpoint(block, x, use_reentrant=False)
+      for i, block in enumerate(self.transformer.layers):
+        if i % self.checkpoint_frequency == 0:
+          x = checkpoint(block, x, use_reentrant=False)
+        else:
+          x = block(x)
     else:
       for block in self.transformer.layers:
         x = block(x)
