@@ -7,7 +7,7 @@ system_prefix = "<|im_start|>system\n"
 user_prefix = "<|im_start|>user\n"
 assistant_prefix = "<|im_start|>assistant\n"
 suffix = "<|im_end|>\n"
-N_SAMPLES = 200
+N_SAMPLES = 100
 MAX_LEN = 16000
 
 def load_LIMO_dataset(tokenizer):
